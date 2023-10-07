@@ -10,7 +10,7 @@ import emu.grasscutter.data.server.Grid;
 import emu.grasscutter.database.DatabaseHelper;
 import emu.grasscutter.game.entity.*;
 import emu.grasscutter.game.entity.gadget.platform.BaseRoute;
-import emu.grasscutter.game.props.EntityType;
+import emu.grasscutter.game.props.EntityIdType;
 import emu.grasscutter.game.quest.*;
 import emu.grasscutter.game.world.*;
 import emu.grasscutter.net.proto.VisionTypeOuterClass;
@@ -38,6 +38,8 @@ public class SceneScriptManager {
     private final Map<String, Integer> variables;
     private SceneMeta meta;
     private boolean isInit;
+
+    private final Map<String, SceneTimeAxis> timeAxis = new ConcurrentHashMap<>();
 
     /** current triggers controlled by RefreshGroup */
     private final Map<Integer, Set<SceneTrigger>> currentTriggers;
@@ -99,7 +101,13 @@ public class SceneScriptManager {
     }
 
     public SceneConfig getConfig() {
-        return this.isInit ? this.meta.config : null;
+        for (int i = 0; i < 10; ++i) {
+            if (this.isInit) {
+                return this.meta.config;
+            }
+            Utils.sleep(100);
+        }
+        return null;
     }
 
     public Map<Integer, SceneBlock> getBlocks() {
@@ -209,7 +217,14 @@ public class SceneScriptManager {
         var suiteData = group.getSuiteByIndex(suiteIndex);
         if (suiteData == null) {
             Grasscutter.getLogger().warn("Group {} suite {} not found", group.id, suiteIndex);
-            return 0;
+            group.setLoaded(false);
+            group.load(this.scene.getId());
+            suiteData = group.getSuiteByIndex(suiteIndex);
+            if (suiteData == null) {
+                return 0;
+            }
+            Grasscutter.getLogger()
+                    .error("Group {} suite {} nvm, I found it. This is BAD", group.id, suiteIndex);
         }
 
         int prevSuiteIndex = groupInstance.getActiveSuiteId();
@@ -382,7 +397,11 @@ public class SceneScriptManager {
         var instance = cachedSceneGroupsInstances.getOrDefault(groupId, null);
         if (instance == null) {
             instance = DatabaseHelper.loadGroupInstance(groupId, scene.getWorld().getHost());
-            if (instance != null) cachedSceneGroupsInstances.put(groupId, instance);
+            if (instance != null) {
+                cachedSceneGroupsInstances.put(groupId, instance);
+                this.cachedSceneGroupsInstances.get(groupId).setCached(false);
+                this.cachedSceneGroupsInstances.get(groupId).setLuaGroup(getGroupById(groupId));
+            }
         }
 
         return instance;
@@ -596,6 +615,8 @@ public class SceneScriptManager {
             var instance = new SceneGroupInstance(group, getScene().getWorld().getHost());
             this.sceneGroupsInstances.put(group.id, instance);
             this.cachedSceneGroupsInstances.put(group.id, instance);
+            this.cachedSceneGroupsInstances.get(group.id).setCached(false);
+            this.cachedSceneGroupsInstances.get(group.id).setLuaGroup(group);
             instance.save(); // Save the instance
         }
 
@@ -627,28 +648,26 @@ public class SceneScriptManager {
             // add other types of entity
             var entities =
                     getScene().getEntities().values().stream()
-                            .filter(
-                                    e ->
-                                            e.getEntityType() == EntityType.Avatar
-                                                    && region.getMetaRegion().contains(e.getPosition()))
+                            .filter(e -> region.getMetaRegion().contains(e.getPosition()))
                             .toList();
+
+            var entitiesIds = entities.stream().map(GameEntity::getId).toList();
+            var enterEntities =
+                    entitiesIds.stream().filter(e -> !region.getEntities().contains(e)).toList();
+            var leaveEntities =
+                    region.getEntities().stream().filter(e -> !entitiesIds.contains(e)).toList();
+
             entities.forEach(region::addEntity);
 
-            var targetId = 0;
-            if (entities.size() > 0) {
-                targetId = entities.get(0).getId();
-            }
-
-            if (region.entityHasEntered()) {
+            for (var targetId : enterEntities) {
+                if (EntityIdType.toEntityType(targetId >> 24).getValue() == 19) continue;
                 Grasscutter.getLogger()
                         .trace("Call EVENT_ENTER_REGION_{}", region.getMetaRegion().config_id);
                 this.callEvent(
                         new ScriptArgs(region.getGroupId(), EventType.EVENT_ENTER_REGION, region.getConfigId())
-                                .setEventSource(EntityType.Avatar.getValue())
+                                .setEventSource(EntityIdType.toEntityType(targetId >> 24).getValue())
                                 .setSourceEntityId(region.getId())
                                 .setTargetEntityId(targetId));
-
-                region.resetNewEntities();
             }
 
             for (var entityId : region.getEntities()) {
@@ -658,14 +677,13 @@ public class SceneScriptManager {
                 }
             }
 
-            if (region.entityHasLeft()) {
+            for (var targetId : leaveEntities) {
+                if (EntityIdType.toEntityType(targetId >> 24).getValue() == 19) continue;
                 this.callEvent(
                         new ScriptArgs(region.getGroupId(), EventType.EVENT_LEAVE_REGION, region.getConfigId())
-                                .setEventSource(EntityType.Avatar.getValue())
+                                .setEventSource(EntityIdType.toEntityType(targetId >> 24).getValue())
                                 .setSourceEntityId(region.getId())
-                                .setTargetEntityId(region.getFirstEntityId()));
-
-                region.resetNewEntities();
+                                .setTargetEntityId(targetId));
             }
         }
     }
@@ -812,7 +830,8 @@ public class SceneScriptManager {
                                 .stream()
                                 .filter(
                                         t ->
-                                                t.getName().substring(13).equals(String.valueOf(params.param1))
+                                                (t.getName().length() <= 12
+                                                                || t.getName().substring(13).equals(String.valueOf(params.param1)))
                                                         && (t.getSource().isEmpty()
                                                                 || t.getSource().equals(params.getEventSource())))
                                 .collect(Collectors.toSet());
@@ -893,7 +912,6 @@ public class SceneScriptManager {
                             .toList()
                             .get(0);
             this.getScene().getPlayers().forEach(p -> p.onEnterRegion(region.getMetaRegion()));
-            this.deregisterRegion(region.getMetaRegion());
         } else if (trigger.getEvent() == EventType.EVENT_LEAVE_REGION) {
             var region =
                     this.regions.values().stream()
@@ -901,7 +919,6 @@ public class SceneScriptManager {
                             .toList()
                             .get(0);
             this.getScene().getPlayers().forEach(p -> p.onLeaveRegion(region.getMetaRegion()));
-            this.deregisterRegion(region.getMetaRegion());
         }
 
         if (trigger.getEvent() == EVENT_TIMER_EVENT) {
@@ -1020,8 +1037,7 @@ public class SceneScriptManager {
         }
 
         // Spawn mob
-        EntityMonster entity = new EntityMonster(getScene(), data, monster.pos, level);
-        entity.getRotation().set(monster.rot);
+        EntityMonster entity = new EntityMonster(getScene(), data, monster.pos, monster.rot, level);
         entity.setGroupId(groupId);
         entity.setBlockId(blockId);
         entity.setConfigId(monster.config_id);
@@ -1163,7 +1179,7 @@ public class SceneScriptManager {
 
         Grasscutter.getLogger()
                 .warn("trying to cancel a timer that's not active {} {}", groupID, source);
-        return 1;
+        return 0;
     }
 
     // todo use killed monsters instead of spawned entites for check?
@@ -1181,6 +1197,27 @@ public class SceneScriptManager {
                             val entity = scene.getEntityByConfigId(m.config_id);
                             return entity != null && entity.getGroupId() == groupId;
                         });
+    }
+
+    /**
+     * Registers a new time axis for this scene. Starts the time axis after.
+     *
+     * @param timeAxis The time axis.
+     */
+    public void initTimeAxis(SceneTimeAxis timeAxis) {
+        this.timeAxis.put(timeAxis.getIdentifier(), timeAxis);
+    }
+
+    /**
+     * Terminates a time axis.
+     *
+     * @param identifier The identifier of the time axis.
+     */
+    public void stopTimeAxis(String identifier) {
+        var timeAxis = this.timeAxis.get(identifier);
+        if (timeAxis != null) {
+            timeAxis.stop();
+        }
     }
 
     public void onDestroy() {

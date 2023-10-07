@@ -9,6 +9,7 @@ import emu.grasscutter.Grasscutter;
 import emu.grasscutter.data.binout.*;
 import emu.grasscutter.data.binout.AbilityModifier.AbilityModifierAction;
 import emu.grasscutter.data.binout.config.*;
+import emu.grasscutter.data.binout.routes.*;
 import emu.grasscutter.data.common.PointData;
 import emu.grasscutter.data.custom.*;
 import emu.grasscutter.data.excels.trial.TrialAvatarActivityDataData;
@@ -31,7 +32,6 @@ import java.util.regex.Pattern;
 import java.util.stream.*;
 import javax.script.*;
 import lombok.*;
-import org.reflections.Reflections;
 
 public final class ResourceLoader {
 
@@ -40,8 +40,7 @@ public final class ResourceLoader {
 
     // Get a list of all resource classes, sorted by loadPriority
     public static List<Class<?>> getResourceDefClasses() {
-        Reflections reflections = new Reflections(ResourceLoader.class.getPackage().getName());
-        Set<?> classes = reflections.getSubTypesOf(GameResource.class);
+        Set<?> classes = Grasscutter.reflector.getSubTypesOf(GameResource.class);
 
         List<Class<?>> classList = new ArrayList<>(classes.size());
         classes.forEach(
@@ -61,9 +60,8 @@ public final class ResourceLoader {
     }
 
     // Get a list containing sets of all resource classes, sorted by loadPriority
-    protected static List<Set<Class<?>>> getResourceDefClassesPrioritySets() {
-        val reflections = new Reflections(ResourceLoader.class.getPackage().getName());
-        val classes = reflections.getSubTypesOf(GameResource.class);
+    private static List<Set<Class<?>>> getResourceDefClassesPrioritySets() {
+        val classes = Grasscutter.reflector.getSubTypesOf(GameResource.class);
         val priorities = ResourceType.LoadPriority.getInOrder();
         Grasscutter.getLogger().debug("Priorities are " + priorities);
         val map = new LinkedHashMap<ResourceType.LoadPriority, Set<Class<?>>>(priorities.size());
@@ -107,6 +105,7 @@ public final class ResourceLoader {
         // Load default home layout
         loadHomeworldDefaultSaveData();
         loadNpcBornData();
+        loadRoutes();
         loadBlossomResources();
         cacheTalentLevelSets();
         // Load activities.
@@ -261,6 +260,32 @@ public final class ResourceLoader {
         } catch (IOException ignored) {
             Grasscutter.getLogger()
                     .error("Scene point files cannot be found, you cannot use teleport waypoints!");
+        }
+    }
+
+    private static void loadRoutes() {
+        try {
+            Files.newDirectoryStream(getResourcePath("BinOutput/LevelDesign/Routes/"), "*.json")
+                    .forEach(
+                            path -> {
+                                try {
+                                    val data = JsonUtils.loadToClass(path, SceneRoutes.class);
+                                    val routesArray = data.getRoutes();
+                                    if (routesArray == null) return;
+                                    val routesMap =
+                                            GameData.getSceneRouteData()
+                                                    .getOrDefault(data.getSceneId(), new Int2ObjectOpenHashMap<>());
+                                    for (Route route : routesArray) {
+                                        routesMap.put(route.getLocalId(), route);
+                                    }
+                                    GameData.getSceneRouteData().put(data.getSceneId(), routesMap);
+                                } catch (IOException ignored) {
+                                }
+                            });
+            Grasscutter.getLogger()
+                    .debug("Loaded " + GameData.getSceneNpcBornData().size() + " SceneRouteDatas.");
+        } catch (IOException e) {
+            Grasscutter.getLogger().error("Failed to load SceneRouteData folder.");
         }
     }
 
@@ -752,7 +777,7 @@ public final class ResourceLoader {
                         if (cs == null) return;
 
                         try {
-                            cs.eval(bindings);
+                            ScriptLoader.eval(cs, bindings);
                             // these are Map<String, class>
                             var teleportDataMap =
                                     ScriptLoader.getSerializer()
@@ -936,7 +961,7 @@ public final class ResourceLoader {
         }
 
         try {
-            cs.eval(bindings);
+            ScriptLoader.eval(cs, bindings);
             // these are Map<String, class>
             var replacementsMap =
                     ScriptLoader.getSerializer()

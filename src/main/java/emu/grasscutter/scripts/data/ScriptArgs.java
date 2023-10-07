@@ -1,5 +1,8 @@
 package emu.grasscutter.scripts.data;
 
+import lombok.ToString;
+
+@ToString
 public class ScriptArgs {
     public int param1;
     public int param2;
@@ -19,10 +22,10 @@ public class ScriptArgs {
     }
 
     public ScriptArgs(int groupId, int eventType, int param1, int param2) {
+        this.group_id = groupId;
         this.type = eventType;
         this.param1 = param1;
         this.param2 = param2;
-        this.group_id = groupId;
     }
 
     public int getParam1() {

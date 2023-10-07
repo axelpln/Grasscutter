@@ -2,10 +2,8 @@ package emu.grasscutter.game.entity.gadget;
 
 import emu.grasscutter.Grasscutter;
 import emu.grasscutter.data.GameData;
-import emu.grasscutter.data.excels.GatherData;
-import emu.grasscutter.data.excels.ItemData;
-import emu.grasscutter.game.entity.EntityGadget;
-import emu.grasscutter.game.entity.EntityItem;
+import emu.grasscutter.data.excels.*;
+import emu.grasscutter.game.entity.*;
 import emu.grasscutter.game.inventory.GameItem;
 import emu.grasscutter.game.player.Player;
 import emu.grasscutter.game.props.ActionReason;
@@ -59,12 +57,12 @@ public final class GadgetGatherObject extends GadgetContent {
         GameItem item = new GameItem(itemData, 1);
         player.getInventory().addItem(item, ActionReason.Gather);
 
-        getGadget()
-                .getScene()
-                .getScriptManager()
-                .callEvent(
-                        new ScriptArgs(
-                                getGadget().getGroupId(), EventType.EVENT_GATHER, getGadget().getConfigId()));
+        var ScriptArgs =
+                new ScriptArgs(getGadget().getGroupId(), EventType.EVENT_GATHER, getGadget().getConfigId());
+        if (getGadget().getMetaGadget() != null) {
+            ScriptArgs.setEventSource(getGadget().getMetaGadget().config_id);
+        }
+        getGadget().getScene().getScriptManager().callEvent(ScriptArgs);
 
         getGadget()
                 .getScene()

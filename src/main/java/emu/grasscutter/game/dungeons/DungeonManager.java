@@ -3,34 +3,25 @@ package emu.grasscutter.game.dungeons;
 import emu.grasscutter.Grasscutter;
 import emu.grasscutter.data.GameData;
 import emu.grasscutter.data.common.ItemParamData;
-import emu.grasscutter.data.excels.dungeon.DungeonData;
-import emu.grasscutter.data.excels.dungeon.DungeonPassConfigData;
+import emu.grasscutter.data.excels.dungeon.*;
 import emu.grasscutter.game.activity.trialavatar.TrialAvatarActivityHandler;
 import emu.grasscutter.game.dungeons.dungeon_results.BaseDungeonResult;
 import emu.grasscutter.game.dungeons.enums.DungeonPassConditionType;
 import emu.grasscutter.game.inventory.GameItem;
 import emu.grasscutter.game.player.Player;
-import emu.grasscutter.game.props.ActionReason;
-import emu.grasscutter.game.props.ActivityType;
-import emu.grasscutter.game.props.WatcherTriggerType;
-import emu.grasscutter.game.quest.enums.LogicType;
-import emu.grasscutter.game.quest.enums.QuestContent;
-import emu.grasscutter.game.world.Position;
-import emu.grasscutter.game.world.Scene;
+import emu.grasscutter.game.props.*;
+import emu.grasscutter.game.quest.enums.*;
+import emu.grasscutter.game.world.*;
 import emu.grasscutter.scripts.constants.EventType;
 import emu.grasscutter.scripts.data.ScriptArgs;
-import emu.grasscutter.server.packet.send.PacketDungeonWayPointNotify;
-import emu.grasscutter.server.packet.send.PacketGadgetAutoPickDropInfoNotify;
+import emu.grasscutter.server.event.player.PlayerFinishDungeonEvent;
+import emu.grasscutter.server.packet.send.*;
 import emu.grasscutter.utils.Utils;
-import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
-import it.unimi.dsi.fastutil.ints.IntSet;
+import it.unimi.dsi.fastutil.ints.*;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
+import java.util.stream.*;
 import javax.annotation.Nullable;
-import lombok.Getter;
-import lombok.NonNull;
-import lombok.val;
+import lombok.*;
 
 /**
  * TODO handle time limits TODO handle respawn points TODO handle team wipes and respawns TODO check
@@ -53,8 +44,13 @@ public final class DungeonManager {
     public DungeonManager(@NonNull Scene scene, @NonNull DungeonData dungeonData) {
         this.scene = scene;
         this.dungeonData = dungeonData;
-        this.passConfigData = GameData.getDungeonPassConfigDataMap().get(dungeonData.getPassCond());
-        this.finishedConditions = new int[passConfigData.getConds().size()];
+        if (dungeonData.getPassCond() == 0) {
+            this.passConfigData = new DungeonPassConfigData();
+            this.passConfigData.setConds(new ArrayList<>());
+        } else {
+            this.passConfigData = GameData.getDungeonPassConfigDataMap().get(dungeonData.getPassCond());
+        }
+        this.finishedConditions = new int[this.passConfigData.getConds().size()];
     }
 
     public void triggerEvent(DungeonPassConditionType conditionType, int... params) {
@@ -76,6 +72,7 @@ public final class DungeonManager {
     }
 
     public boolean isFinishedSuccessfully() {
+        if (passConfigData.getConds() == null) return false;
         return LogicType.calculate(passConfigData.getLogicType(), finishedConditions);
     }
 
@@ -280,14 +277,31 @@ public final class DungeonManager {
     }
 
     public void finishDungeon() {
-        // Mark the dungeon has completed for the players.
-        var dungeonId = this.getDungeonData().getId();
-        this.getScene()
-                .getPlayers()
-                .forEach(player -> player.getPlayerProgress().markDungeonAsComplete(dungeonId));
+        this.notifyEndDungeon(true);
+        this.endDungeon(BaseDungeonResult.DungeonEndReason.COMPLETED);
 
-        notifyEndDungeon(true);
-        endDungeon(BaseDungeonResult.DungeonEndReason.COMPLETED);
+        // Call PlayerFinishDungeonEvent.
+        new PlayerFinishDungeonEvent(this.getScene().getPlayers(), this.getScene(), this).call();
+
+        // jump players to next dungeon if available
+        if (this.dungeonData.getPassJumpDungeon() != 0) {
+            for (var player : this.getScene().getPlayers()) {
+                player
+                        .getServer()
+                        .getDungeonSystem()
+                        .enterDungeon(player, 0, this.dungeonData.getPassJumpDungeon(), false);
+            }
+        }
+    }
+
+    public void quitDungeon() {
+        this.notifyEndDungeon(false);
+        this.endDungeon(BaseDungeonResult.DungeonEndReason.QUIT);
+    }
+
+    public void failDungeon() {
+        this.notifyEndDungeon(false);
+        this.endDungeon(BaseDungeonResult.DungeonEndReason.FAILED);
     }
 
     public void notifyEndDungeon(boolean successfully) {
@@ -295,8 +309,11 @@ public final class DungeonManager {
                 .getPlayers()
                 .forEach(
                         p -> {
-                            // Trigger the fail event if needed.
-                            if (!successfully) {
+                            // Trigger the fail and success event.
+                            if (successfully) {
+                                var dungeonId = this.getDungeonData().getId();
+                                p.getPlayerProgress().markDungeonAsComplete(dungeonId);
+                            } else {
                                 p.getQuestManager()
                                         .queueEvent(QuestContent.QUEST_CONTENT_FAIL_DUNGEON, dungeonData.getId());
                             }
@@ -309,16 +326,6 @@ public final class DungeonManager {
         scene
                 .getScriptManager()
                 .callEvent(new ScriptArgs(0, EventType.EVENT_DUNGEON_SETTLE, successfully ? 1 : 0));
-    }
-
-    public void quitDungeon() {
-        notifyEndDungeon(false);
-        endDungeon(BaseDungeonResult.DungeonEndReason.QUIT);
-    }
-
-    public void failDungeon() {
-        notifyEndDungeon(false);
-        endDungeon(BaseDungeonResult.DungeonEndReason.FAILED);
     }
 
     public void endDungeon(BaseDungeonResult.DungeonEndReason endReason) {

@@ -4,8 +4,7 @@ import static emu.grasscutter.game.dungeons.challenge.enums.ChallengeType.CHALLE
 
 import emu.grasscutter.game.dungeons.challenge.WorldChallenge;
 import emu.grasscutter.game.dungeons.challenge.enums.ChallengeType;
-import emu.grasscutter.game.dungeons.challenge.trigger.GuardTrigger;
-import emu.grasscutter.game.dungeons.challenge.trigger.KillMonsterCountTrigger;
+import emu.grasscutter.game.dungeons.challenge.trigger.*;
 import emu.grasscutter.game.world.Scene;
 import emu.grasscutter.scripts.data.SceneGroup;
 import java.util.List;

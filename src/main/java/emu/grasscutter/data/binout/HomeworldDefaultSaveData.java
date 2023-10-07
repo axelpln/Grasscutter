@@ -3,46 +3,65 @@ package emu.grasscutter.data.binout;
 import com.google.gson.annotations.SerializedName;
 import emu.grasscutter.game.world.Position;
 import java.util.List;
-import lombok.AccessLevel;
-import lombok.Data;
+import lombok.*;
 import lombok.experimental.FieldDefaults;
 
 @Data
 @FieldDefaults(level = AccessLevel.PRIVATE)
 public class HomeworldDefaultSaveData {
 
-    @SerializedName(value = "KFHBFNPDJBE", alternate = "PKACPHDGGEI")
+    @SerializedName(
+            value = "homeBlockLists",
+            alternate = {"PKACPHDGGEI", "AKOLOBLHDFK", "KFHBFNPDJBE"})
     List<HomeBlock> homeBlockLists;
 
-    @SerializedName(value = "IJNPADKGNKE", alternate = "MINCKHBNING")
+    @SerializedName(
+            value = "bornPos",
+            alternate = {"MINCKHBNING", "MBICDPDEKDM", "IJNPADKGNKE"})
     Position bornPos;
 
-    @SerializedName("IPIIGEMFLHK")
+    @SerializedName(
+            value = "bornRot",
+            alternate = {"EJJIOJKFKCO", "IPIIGEMFLHK"})
     Position bornRot;
 
-    @SerializedName("HHOLBNPIHEM")
+    @SerializedName(
+            value = "djinPos",
+            alternate = {"CJAKHCIFHNP", "HHOLBNPIHEM"})
     Position djinPos;
 
-    @SerializedName("KNHCJKHCOAN")
+    @SerializedName(
+            value = "mainhouse",
+            alternate = {"AMDNOHPGKMI", "KNHCJKHCOAN"})
     HomeFurniture mainhouse;
 
-    @SerializedName("NIHOJFEKFPG")
+    @SerializedName(
+            value = "doorLists",
+            alternate = {"BHCPEAOPIDC", "NIHOJFEKFPG"})
     List<HomeFurniture> doorLists;
 
-    @SerializedName("EPGELGEFJFK")
+    @SerializedName(
+            value = "stairLists",
+            alternate = {"AABEPENIFLN", "EPGELGEFJFK"})
     List<HomeFurniture> stairLists;
 
     @Data
     @FieldDefaults(level = AccessLevel.PRIVATE)
     public static class HomeBlock {
 
-        @SerializedName(value = "FGIJCELCGFI", alternate = "PGDPDIDJEEL")
+        @SerializedName(
+                value = "blockId",
+                alternate = {"PGDPDIDJEEL", "ANICBLBOBKD", "FGIJCELCGFI"})
         int blockId;
 
-        @SerializedName("BEAPOFELABD")
+        @SerializedName(
+                value = "furnitures",
+                alternate = {"NCIMIKKFLOH", "BEAPOFELABD"})
         List<HomeFurniture> furnitures;
 
-        @SerializedName("MLIODLGDFHJ")
+        @SerializedName(
+                value = "persistentFurnitures",
+                alternate = {"GJGNLIINBGB", "MLIODLGDFHJ"})
         List<HomeFurniture> persistentFurnitures;
     }
 
@@ -50,12 +69,19 @@ public class HomeworldDefaultSaveData {
     @FieldDefaults(level = AccessLevel.PRIVATE)
     public static class HomeFurniture {
 
-        @SerializedName(value = "ENHNGKJBJAB", alternate = "KMAAJJHPNBA")
+        @SerializedName(
+                value = "id",
+                alternate = {"KMAAJJHPNBA", "FFLCGFGGGND", "ENHNGKJBJAB"})
         int id;
 
-        @SerializedName(value = "NGIEEIOLPPO", alternate = "JFKAHNCPDME")
+        @SerializedName(
+                value = "pos",
+                alternate = {"JFKAHNCPDME", "BPCGGBKIAMG", "NGIEEIOLPPO"})
         Position pos;
-        // @SerializedName(value = "HEOCEHKEBFM", alternate = "LKCKOOGFDBM")
+
+        @SerializedName(
+                value = "rot",
+                alternate = {"LKCKOOGFDBM", "HEOCEHKEBFM"})
         Position rot;
     }
 }

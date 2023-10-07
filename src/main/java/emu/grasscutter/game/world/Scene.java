@@ -1,23 +1,27 @@
 package emu.grasscutter.game.world;
 
 import emu.grasscutter.Grasscutter;
-import emu.grasscutter.data.*;
+import emu.grasscutter.data.GameData;
+import emu.grasscutter.data.GameDepot;
 import emu.grasscutter.data.binout.SceneNpcBornEntry;
 import emu.grasscutter.data.binout.routes.Route;
-import emu.grasscutter.data.excels.*;
+import emu.grasscutter.data.excels.ItemData;
 import emu.grasscutter.data.excels.codex.CodexAnimalData;
 import emu.grasscutter.data.excels.monster.MonsterData;
+import emu.grasscutter.data.excels.scene.SceneData;
 import emu.grasscutter.data.excels.world.WorldLevelData;
 import emu.grasscutter.data.server.Grid;
 import emu.grasscutter.game.avatar.Avatar;
-import emu.grasscutter.game.dungeons.*;
+import emu.grasscutter.game.dungeons.DungeonManager;
+import emu.grasscutter.game.dungeons.DungeonSettleListener;
 import emu.grasscutter.game.dungeons.challenge.WorldChallenge;
 import emu.grasscutter.game.dungeons.enums.DungeonPassConditionType;
 import emu.grasscutter.game.entity.*;
 import emu.grasscutter.game.entity.gadget.GadgetWorktop;
 import emu.grasscutter.game.inventory.GameItem;
 import emu.grasscutter.game.managers.blossom.BlossomManager;
-import emu.grasscutter.game.player.*;
+import emu.grasscutter.game.player.Player;
+import emu.grasscutter.game.player.TeamInfo;
 import emu.grasscutter.game.props.*;
 import emu.grasscutter.game.quest.QuestGroupSuite;
 import emu.grasscutter.game.world.data.TeleportProperties;
@@ -25,21 +29,26 @@ import emu.grasscutter.net.packet.BasePacket;
 import emu.grasscutter.net.proto.*;
 import emu.grasscutter.net.proto.AttackResultOuterClass.AttackResult;
 import emu.grasscutter.net.proto.VisionTypeOuterClass.VisionType;
-import emu.grasscutter.scripts.*;
+import emu.grasscutter.scripts.SceneIndexManager;
+import emu.grasscutter.scripts.SceneScriptManager;
 import emu.grasscutter.scripts.constants.EventType;
-import emu.grasscutter.scripts.data.*;
+import emu.grasscutter.scripts.data.SceneBlock;
+import emu.grasscutter.scripts.data.SceneGroup;
+import emu.grasscutter.scripts.data.ScriptArgs;
 import emu.grasscutter.server.event.entity.EntityCreationEvent;
 import emu.grasscutter.server.event.player.PlayerTeleportEvent;
 import emu.grasscutter.server.packet.send.*;
-import emu.grasscutter.utils.objects.KahnsSort;
+import emu.grasscutter.server.scheduler.ServerTaskScheduler;
+import emu.grasscutter.utils.algorithms.KahnsSort;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import lombok.*;
 
-public final class Scene {
+public class Scene {
     @Getter private final World world;
     @Getter private final SceneData sceneData;
     @Getter private final List<Player> players;
@@ -51,7 +60,6 @@ public final class Scene {
     @Getter private final Set<SceneGroup> loadedGroups;
     @Getter private final BlossomManager blossomManager;
     private final HashSet<Integer> unlockedForces;
-    private final List<Runnable> afterLoadedCallbacks = new ArrayList<>();
     private final long startWorldTime;
     @Getter @Setter DungeonManager dungeonManager;
     @Getter Int2ObjectMap<Route> sceneRoutes;
@@ -65,10 +73,14 @@ public final class Scene {
     @Getter @Setter private int killedMonsterCount;
     private Set<SceneNpcBornEntry> npcBornEntrySet;
     @Getter private boolean finishedLoading = false;
-    @Getter private int tickCount = 0;
+    @Getter protected int tickCount = 0;
     @Getter private boolean isPaused = false;
 
+    private final List<Runnable> afterLoadedCallbacks = new ArrayList<>();
+    private final List<Runnable> afterHostInitCallbacks = new ArrayList<>();
+
     @Getter private GameEntity sceneEntity;
+    @Getter private final ServerTaskScheduler scheduler;
 
     public Scene(World world, SceneData sceneData) {
         this.world = world;
@@ -92,6 +104,7 @@ public final class Scene {
         this.blossomManager = new BlossomManager(this);
         this.unlockedForces = new HashSet<>();
         this.sceneEntity = new EntityScene(this);
+        this.scheduler = new ServerTaskScheduler();
     }
 
     public int getId() {
@@ -104,6 +117,13 @@ public final class Scene {
 
     public int getPlayerCount() {
         return this.getPlayers().size();
+    }
+
+    /**
+     * @return The scene's world's host.
+     */
+    public Player getHost() {
+        return this.getWorld().getHost();
     }
 
     public GameEntity getEntityById(int id) {
@@ -245,6 +265,13 @@ public final class Scene {
         for (EntityBaseGadget gadget : player.getTeamManager().getGadgets()) {
             this.removeEntity(gadget);
         }
+
+        // Remove player widget gadgets
+        this.getEntities().values().stream()
+                .filter(gameEntity -> gameEntity instanceof EntityVehicle)
+                .map(gameEntity -> (EntityVehicle) gameEntity)
+                .filter(entityVehicle -> entityVehicle.getOwner().equals(player))
+                .forEach(entityVehicle -> this.removeEntity(entityVehicle, VisionType.VISION_TYPE_REMOVE));
 
         // Deregister scene if not in use
         if (this.getPlayerCount() <= 0 && !this.dontDestroyWhenEmpty) {
@@ -418,7 +445,7 @@ public final class Scene {
                         .map(this::removeEntityDirectly)
                         .filter(Objects::nonNull)
                         .toList();
-        if (toRemove.size() > 0) {
+        if (!toRemove.isEmpty()) {
             this.broadcastPacket(new PacketSceneEntityDisappearNotify(toRemove, visionType));
         }
     }
@@ -436,7 +463,12 @@ public final class Scene {
     public void showOtherEntities(Player player) {
         GameEntity currentEntity = player.getTeamManager().getCurrentAvatarEntity();
         List<GameEntity> entities =
-                this.getEntities().values().stream().filter(entity -> entity != currentEntity).toList();
+                this.getEntities().values().stream()
+                        .filter(entity -> entity != currentEntity)
+                        .filter(
+                                gameEntity ->
+                                        !(gameEntity instanceof Rebornable rebornable) || !rebornable.isInCD())
+                        .toList();
 
         player.sendPacket(new PacketSceneEntityAppearNotify(entities, VisionType.VISION_TYPE_MEET));
     }
@@ -503,7 +535,17 @@ public final class Scene {
                                 "Can not solve monster drop: drop_id = {}, drop_tag = {}. Falling back to legacy drop system.",
                                 monster.getMetaMonster().drop_id,
                                 monster.getMetaMonster().drop_tag);
-                getWorld().getServer().getDropSystemLegacy().callDrop(monster);
+                world.getServer().getDropSystemLegacy().callDrop(monster);
+            }
+        }
+
+        if (target instanceof EntityGadget gadget) {
+            if (gadget.getMetaGadget() != null) {
+                world
+                        .getServer()
+                        .getDropSystem()
+                        .handleChestDrop(
+                                gadget.getMetaGadget().drop_id, gadget.getMetaGadget().drop_count, gadget);
             }
         }
 
@@ -522,6 +564,10 @@ public final class Scene {
                 || this.getSceneType() == SceneType.SCENE_HOME_ROOM) {
             this.finishLoading();
             return;
+        }
+
+        if (!isPaused) {
+            this.getScheduler().runTasks();
         }
 
         if (this.getScriptManager().isInit()) {
@@ -559,7 +605,7 @@ public final class Scene {
     }
 
     /** Validates a player's current position. Teleports the player if the player is out of bounds. */
-    private void checkPlayerRespawn() {
+    protected void checkPlayerRespawn() {
         if (this.getScriptManager().getConfig() == null) return;
         var diePos = this.getScriptManager().getConfig().die_y;
 
@@ -678,6 +724,34 @@ public final class Scene {
         this.afterLoadedCallbacks.add(runnable);
     }
 
+    /**
+     * Invoked when a player initializes loading the scene.
+     *
+     * @param player The player that initialized loading the scene.
+     */
+    public void playerSceneInitialized(Player player) {
+        // Check if the player is the host.
+        if (!player.equals(this.getHost())) return;
+
+        // Run all callbacks.
+        this.afterHostInitCallbacks.forEach(Runnable::run);
+        this.afterHostInitCallbacks.clear();
+    }
+
+    /**
+     * Run a callback when the host initializes loading the scene.
+     *
+     * @param runnable The callback to be executed.
+     */
+    public void runWhenHostInitialized(Runnable runnable) {
+        if (this.isFinishedLoading()) {
+            runnable.run();
+            return;
+        }
+
+        this.afterHostInitCallbacks.add(runnable);
+    }
+
     public int getEntityLevel(int baseLevel, int worldLevelOverride) {
         int level = worldLevelOverride > 0 ? worldLevelOverride + baseLevel - 22 : baseLevel;
         level = Math.min(level, 100);
@@ -742,8 +816,8 @@ public final class Scene {
 
                     int level = this.getEntityLevel(entry.getLevel(), worldLevelOverride);
 
-                    EntityMonster monster = new EntityMonster(this, data, entry.getPos(), level);
-                    monster.getRotation().set(entry.getRot());
+                    EntityMonster monster =
+                            new EntityMonster(this, data, entry.getPos(), entry.getRot(), level);
                     monster.setGroupId(entry.getGroup().getGroupId());
                     monster.setPoseId(entry.getPoseId());
                     monster.setConfigId(entry.getConfigId());
@@ -871,8 +945,7 @@ public final class Scene {
 
     public int loadDynamicGroup(int group_id) {
         SceneGroup group = getScriptManager().getGroupById(group_id);
-        if (group == null || getScriptManager().getGroupInstanceById(group_id) != null)
-            return -1; // Group not found or already instanced
+        if (group == null) return -1; // Group not found
 
         this.onLoadGroup(new ArrayList<>(List.of(group)));
 

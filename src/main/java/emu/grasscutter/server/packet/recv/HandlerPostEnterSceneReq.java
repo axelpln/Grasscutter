@@ -1,9 +1,7 @@
 package emu.grasscutter.server.packet.recv;
 
 import emu.grasscutter.game.quest.enums.QuestContent;
-import emu.grasscutter.net.packet.Opcodes;
-import emu.grasscutter.net.packet.PacketHandler;
-import emu.grasscutter.net.packet.PacketOpcodes;
+import emu.grasscutter.net.packet.*;
 import emu.grasscutter.server.game.GameSession;
 import emu.grasscutter.server.packet.send.PacketPostEnterSceneRsp;
 
@@ -28,6 +26,7 @@ public class HandlerPostEnterSceneReq extends PacketHandler {
                 if (dungeonManager != null) dungeonManager.startDungeon();
             }
         }
+        questManager.queueEvent(QuestContent.QUEST_CONTENT_LEAVE_SCENE, scene.getPrevScene());
 
         session.send(new PacketPostEnterSceneRsp(session.getPlayer()));
     }
